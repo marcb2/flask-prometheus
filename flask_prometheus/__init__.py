@@ -1,41 +1,48 @@
 
 import time
 
-from prometheus_client import Counter, Histogram
-from prometheus_client import start_http_server
-from flask import request
+from prometheus_client import CollectorRegistry, Counter, Histogram
+from prometheus_client import multiprocess, generate_latest, CONTENT_TYPE_LATEST
+from flask import request, Response
 
 FLASK_REQUEST_LATENCY = Histogram('flask_request_latency_seconds', 'Flask Request Latency',
-				['method', 'endpoint'])
+                                  ['method', 'endpoint'])
 FLASK_REQUEST_COUNT = Counter('flask_request_count', 'Flask Request Count',
-				['method', 'endpoint', 'http_status'])
+                              ['method', 'endpoint', 'http_status'])
 
 
-def before_request():
-    request.start_time = time.time()
+class Prometheus():
+    def __init__(self, app=None):
+        self.app = app
+        if app is not None:
+            self.init_app(app)
 
+    def init_app(self, app):
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry)
+        app.before_request(self.before_request)
+        app.after_request(self.after_request)
 
-def after_request(response):
-    request_latency = time.time() - request.start_time
-    FLASK_REQUEST_LATENCY.labels(request.method, request.path).observe(request_latency)
-    FLASK_REQUEST_COUNT.labels(request.method, request.path, response.status_code).inc()
+        @app.route("/metrics", )
+        def metrics():
+            data = generate_latest(registry)
+            headers = [
+                ('Content-type', CONTENT_TYPE_LATEST),
+                ('Content-Length', str(len(data)))
+            ]
+            return Response(data, headers=headers)
 
-    return response
+    @staticmethod
+    def before_request():
+        request.start_time = time.time()
 
-def monitor(app, port=8000, addr=''):
-    app.before_request(before_request)
-    app.after_request(after_request)
-    start_http_server(port, addr)
+    @staticmethod
+    def after_request(response):
+        request_latency = time.time() - request.start_time
+        if 'metrics' not in request.url_rule.rule:
+            FLASK_REQUEST_LATENCY.labels(
+                request.method, request.path).observe(request_latency)
+            FLASK_REQUEST_COUNT.labels(
+                request.method, request.path, response.status_code).inc()
 
-if __name__ == '__main__':
-    from flask import Flask
-    app = Flask(__name__)
-
-    monitor(app, port=8000)
-
-    @app.route('/')
-    def index():
-        return "Hello"
-
-    # Run the application!
-    app.run()
+        return response
