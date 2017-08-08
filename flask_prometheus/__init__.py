@@ -25,12 +25,12 @@ class Prometheus():
 
         @app.route("/metrics", )
         def metrics():
-            data = generate_latest(registry)
+            data = generate_latest()
             headers = [
                 ('Content-type', CONTENT_TYPE_LATEST),
                 ('Content-Length', str(len(data)))
             ]
-            return Response(data, headers=headers)
+            return Response(data.decode('utf-8'), headers=headers)
 
     @staticmethod
     def before_request():
